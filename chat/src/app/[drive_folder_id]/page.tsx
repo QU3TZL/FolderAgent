@@ -437,6 +437,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                                                     onUpdate={(content) => handleResponseUpdate(index, content)}
                                                     showToolbar={false}
                                                     immediatelyRender={false}
+                                                    onSubmit={() => { }}
                                                 />
                                             )}
                                         </div>
