@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: folderagent
+    env: node
+    region: ohio
+    plan: starter
+    buildCommand: npm install; npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: VECTORIA_INTERNAL_URL
+        fromGroup: folderagent-prod
+      - key: NEXT_PUBLIC_UPGRADE_URL
+        fromGroup: folderagent-prod
+      - key: NEXT_PUBLIC_UPGRADE_API_URL
+        fromGroup: folderagent-prod
+      - key: BASE_PATH
+        value: /chat
+      - key: NODE_OPTIONS
+        value: --max_old_space_size=4096
+    healthCheckPath: /chat/health
+    autoDeploy: true 

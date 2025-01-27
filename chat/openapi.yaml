@@ -1,0 +1,128 @@
+openapi: 3.0.0
+info:
+  title: FolderAgent API
+  description: API for the FolderAgent chat interface that provides conversational access to UpGrade folders
+  version: 1.0.0
+servers:
+  - url: https://folderagent.onrender.com/chat
+    description: Production server
+  - url: http://localhost:3000/chat
+    description: Development server
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns the health status of the service
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+
+  /api/chat:
+    post:
+      summary: Chat with a folder
+      description: Send a query to chat about the contents of a specific folder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+                - folder_id
+                - user_id
+                - user_creds
+              properties:
+                query:
+                  type: string
+                  description: The user's question about the folder
+                folder_id:
+                  type: string
+                  description: Google Drive folder ID
+                user_id:
+                  type: string
+                  description: User's ID from UpGrade
+                user_creds:
+                  type: object
+                  description: Google Drive credentials
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  response:
+                    type: string
+                    description: AI-generated response to the query
+        '400':
+          description: Bad request - missing required fields
+        '401':
+          description: Unauthorized - missing or invalid token
+        '500':
+          description: Internal server error
+
+  /api/folder/{folder_id}/vectorization-status:
+    get:
+      summary: Get folder vectorization status
+      description: Check the processing status of a folder's documents
+      parameters:
+        - name: folder_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Google Drive folder ID
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [pending, processing, completed, failed]
+                  total_documents:
+                    type: integer
+                  processed_documents:
+                    type: integer
+                  failed_documents:
+                    type: integer
+                  processing_records:
+                    type: array
+                    items:
+                      type: object
+        '404':
+          description: Folder not found
+        '500':
+          description: Internal server error
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: JWT token from UpGrade authentication
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Chat
+    description: Chat interaction endpoints
+  - name: Folder
+    description: Folder management endpoints 
