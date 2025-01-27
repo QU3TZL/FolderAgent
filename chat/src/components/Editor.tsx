@@ -6,10 +6,22 @@ interface EditorProps {
     onSubmit: (text: string) => void;
     placeholder?: string;
     disabled?: boolean;
+    content?: string;
+    onUpdate?: (content: string) => void;
+    showToolbar?: boolean;
+    immediatelyRender?: boolean;
 }
 
-export function Editor({ onSubmit, placeholder = "Type your message...", disabled = false }: EditorProps) {
-    const [text, setText] = React.useState("");
+export function Editor({
+    onSubmit,
+    placeholder = "Type your message...",
+    disabled = false,
+    content = "",
+    onUpdate,
+    showToolbar = true,
+    immediatelyRender = true
+}: EditorProps) {
+    const [text, setText] = React.useState(content);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -18,6 +30,12 @@ export function Editor({ onSubmit, placeholder = "Type your message...", disable
             setText("");
         }
     };
+
+    React.useEffect(() => {
+        if (onUpdate) {
+            onUpdate(text);
+        }
+    }, [text, onUpdate]);
 
     return (
         <form onSubmit={handleSubmit} className="flex gap-2 p-4 border-t">
