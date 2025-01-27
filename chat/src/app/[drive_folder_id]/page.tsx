@@ -1,10 +1,10 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Input } from "../../../components/ui/input"
-import { Button } from "../../../components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { Send, Camera, Mic, ArrowLeft } from 'lucide-react'
-import { Editor } from "../../../components/Editor"
+import { Editor } from "@/components/Editor"
 import { motion, AnimatePresence } from 'framer-motion'
 
 type ChatResponse = {
