@@ -5,7 +5,7 @@
     "scripts": {
         "dev": "next dev",
         "build": "next build",
-        "start": "next start",
+        "start": "next run start",
         "lint": "next lint"
     },
     "dependencies": {
@@ -31,6 +31,12 @@
         "@radix-ui/react-scroll-area": "^1.0.5",
         "@radix-ui/react-separator": "^1.0.3",
         "@radix-ui/react-toast": "^1.1.5",
-        "tailwindcss-animate": "^1.0.7"
+        "tailwindcss-animate": "^1.0.7",
+        "@tiptap/react": "^2.1.13",
+        "@tiptap/pm": "^2.1.13",
+        "@tiptap/starter-kit": "^2.1.13",
+        "@tiptap/extension-underline": "^2.1.13",
+        "@tiptap/extension-font-family": "^2.1.13",
+        "@tiptap/extension-image": "^2.1.13"
     }
 }
