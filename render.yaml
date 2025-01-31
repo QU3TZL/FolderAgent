@@ -12,11 +12,13 @@ services:
       - key: PORT
         value: 10000
       - key: VECTORIA_INTERNAL_URL
-        fromGroup: folderagent-prod
+        value: http://vectoria:10000
       - key: NEXT_PUBLIC_UPGRADE_URL
-        fromGroup: folderagent-prod
+        value: http://upgrade-hwae:10000
       - key: NEXT_PUBLIC_UPGRADE_API_URL
-        fromGroup: folderagent-prod
+        value: http://upgrade-hwae:10000
+      - key: OPENAI_API_KEY
+        sync: false # Indicates this is a secret value
       - key: BASE_PATH
         value: /chat
       - key: NODE_OPTIONS

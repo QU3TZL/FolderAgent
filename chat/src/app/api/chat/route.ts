@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { VectoriaClient } from '@/services/vectoria'
+import { ChatRequest } from '@/types/vectoria'
 
 const VECTORIA_URL = process.env.VECTORIA_INTERNAL_URL || 'http://localhost:3000'
 console.log('[Chat API] Initialized with VECTORIA_URL:', VECTORIA_URL);
@@ -6,8 +8,9 @@ console.log('[Chat API] Initialized with VECTORIA_URL:', VECTORIA_URL);
 export async function POST(request: NextRequest) {
     try {
         console.log('[Chat API] Received POST request');
-        const { query, folder_id, user_id, user_creds } = await request.json();
+        const { query, folder_id } = await request.json();
 
+        // Validate required fields
         if (!query) {
             console.log('[Chat API] No query provided');
             return NextResponse.json({ error: 'No query provided' }, { status: 400 });
@@ -18,11 +21,6 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'No folder_id provided' }, { status: 400 });
         }
 
-        if (!user_id || !user_creds) {
-            console.log('[Chat API] Missing user credentials');
-            return NextResponse.json({ error: 'Missing user credentials' }, { status: 400 });
-        }
-
         // Get token from Authorization header
         const token = request.headers.get('Authorization')?.replace('Bearer ', '');
         if (!token) {
@@ -30,40 +28,26 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
         }
 
-        console.log('[Chat API] Making request to vectoria chat endpoint');
-        if (!VECTORIA_URL) {
-            console.log('[Chat API] No VECTORIA_URL configured');
-            return NextResponse.json({ error: 'Vectoria URL not configured' }, { status: 500 });
-        }
+        // Create chat request
+        const chatRequest: ChatRequest = {
+            folder_id,
+            query,
+        };
 
-        const chatEndpoint = `${VECTORIA_URL}/api/chat`;
-        console.log('[Chat API] Using chat endpoint:', chatEndpoint);
+        // Initialize Vectoria client and send request
+        console.log('[Chat API] Sending request to Vectoria');
+        const vectoria = new VectoriaClient();
+        const response = await vectoria.chat(chatRequest, token);
 
-        const response = await fetch(chatEndpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-                folder_id,
-                query,
-                user_id,
-                user_creds
-            }),
-        });
-
-        if (!response.ok) {
-            console.log('[Chat API] Error from chat endpoint:', response.status, await response.text());
-            return NextResponse.json({ error: 'Chat request failed' }, { status: response.status });
-        }
-
-        const data = await response.json();
-        return NextResponse.json(data);
+        console.log('[Chat API] Successfully received response from Vectoria');
+        return NextResponse.json(response);
 
     } catch (error) {
         console.error('[Chat API] Error:', error);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        return NextResponse.json(
+            { error: error instanceof Error ? error.message : 'Internal server error' },
+            { status: 500 }
+        );
     }
 }
 
@@ -72,7 +56,7 @@ export async function OPTIONS() {
         headers: {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User-ID, X-User-Creds',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         }
     });
 } 

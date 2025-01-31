@@ -14,6 +14,10 @@ import Image from '@tiptap/extension-image'
 import Underline from '@tiptap/extension-underline'
 import { motion, AnimatePresence } from "framer-motion"
 import { MenuBarProps, TipTapEditorProps, Message } from '@/types/editor'
+import { FileChat } from './FileChat'
+import { FileAutocomplete } from './FileAutocomplete'
+import { useFileIndex } from '@/hooks/useFileIndex'
+import { FileInfo } from '@/types/vectoria'
 
 const editorStyles = `
   .tiptap {
@@ -222,240 +226,70 @@ const TipTapEditor = ({ content, onUpdate, showToolbar, onFocus }: TipTapEditorP
     )
 }
 
-export default function ChatInterface({ folderUuid }: { folderUuid: string }) {
-    const [messages, setMessages] = useState<Message[]>([]);
+interface ChatInterfaceProps {
+    folderId: string;
+    authToken: string;
+}
+
+export function ChatInterface({ folderId, authToken }: ChatInterfaceProps) {
     const [input, setInput] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [showTipTapMenu, setShowTipTapMenu] = useState(false);
-    const [activeEditorIndex, setActiveEditorIndex] = useState<number | null>(null);
-    const scrollRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
+    const [activeFiles, setActiveFiles] = useState<FileInfo[]>([]);
+    const { files, isLoading, error, searchFiles } = useFileIndex(folderId, authToken);
+    const [showAutocomplete, setShowAutocomplete] = useState(false);
+    const matchingFiles = searchFiles(input);
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!input.trim() || isLoading) return;
-
-        const userMessage: Message = {
-            role: 'user',
-            content: input,
-            timestamp: Date.now()
-        };
-
-        setMessages(prev => [userMessage, ...prev]);
-        setInput('');
-        setIsLoading(true);
-
-        try {
-            console.log('Making chat request with folder:', folderUuid);
-            const token = localStorage.getItem('auth_token');
-            const userData = JSON.parse(localStorage.getItem('user_data') || '{}');
-
-            if (!token) {
-                throw new Error('Authentication token missing. Please sign in again.');
-            }
-            if (!userData.id) {
-                throw new Error('User ID missing. Please sign in again.');
-            }
-            if (!userData.drive_token) {
-                throw new Error('Drive credentials missing. Please reconnect your Google Drive.');
-            }
-
-            const response = await fetch(`/api/chat`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    query: input,
-                    folder_id: folderUuid,
-                    user_id: userData.id,
-                    user_creds: JSON.parse(userData.drive_token)
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-            }
-
-            const data = await response.json();
-
-            // Start streaming the response
-            const assistantMessage: Message = {
-                role: 'assistant',
-                content: '',
-                timestamp: Date.now(),
-                isStreaming: true
-            };
-
-            setMessages(prev => [assistantMessage, ...prev]);
-            setActiveEditorIndex(0);
-
-            // Stream in the response character by character
-            const text = data.response;
-            let currentText = '';
-            for (let i = 0; i < text.length; i++) {
-                currentText += text[i];
-                setMessages(prev => prev.map((msg, idx) =>
-                    idx === 0 ? { ...msg, content: currentText } : msg
-                ));
-                await new Promise(resolve => setTimeout(resolve, 20));
-            }
-
-            // Mark streaming as complete
-            setMessages(prev => prev.map((msg, idx) =>
-                idx === 0 ? { ...msg, isStreaming: false } : msg
-            ));
-
-        } catch (error) {
-            console.error('Failed to send message:', error);
-            const errorMessage: Message = {
-                role: 'assistant',
-                content: 'Sorry, I encountered an error processing your message. Please try again.',
-                timestamp: Date.now()
-            };
-            setMessages(prev => [errorMessage, ...prev]);
-        } finally {
-            setIsLoading(false);
-        }
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        setInput(value);
+        setShowAutocomplete(value.startsWith('file/'));
     };
 
-    useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = 0;
+    const handleFileSelect = (file: FileInfo) => {
+        // Only add if not already active
+        if (!activeFiles.find(f => f.file_id === file.file_id)) {
+            setActiveFiles(prev => [file, ...prev]);
         }
-    }, [messages]);
+        setInput('');
+        setShowAutocomplete(false);
+    };
 
-    const handleResponseUpdate = useCallback((index: number, newContent: string) => {
-        setMessages(prev =>
-            prev.map((r, i) => i === index ? { ...r, content: newContent } : r)
-        );
-    }, []);
-
-    const toggleTipTapMenu = () => {
-        setShowTipTapMenu(!showTipTapMenu);
-        if (!showTipTapMenu) {
-            setActiveEditorIndex(null);
-        }
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        // Handle regular chat submission here
     };
 
     return (
-        <div className="w-screen min-h-screen bg-[#f4f0e8] flex justify-center items-start pt-4 px-5">
-            <Card className="w-full max-w-none min-h-screen flex flex-col border-none bg-[#f4f0e8] shadow-none">
-                <CardContent className="flex-grow flex flex-col p-4">
-                    <div className="sticky top-0 z-10 bg-[#f4f0e8] mb-4">
-                        <div className="flex items-center justify-between mb-4">
-                            <Button
-                                type="button"
-                                size="icon"
-                                variant="outline"
-                                className="rounded-full w-10 h-10 flex items-center justify-center bg-[#f4f0e8]"
-                            >
-                                <ArrowLeft className="h-4 w-4" />
-                                <span className="sr-only">Go back</span>
-                            </Button>
-                            <div className="text-lg font-semibold">Folder: {folderUuid}</div>
-                            <div className="text-sm text-gray-500">{new Date().toLocaleDateString()}</div>
-                        </div>
-                        <form onSubmit={handleSubmit} className="flex items-center space-x-2">
-                            <div className="flex-grow relative">
-                                <Input
-                                    ref={inputRef}
-                                    value={input}
-                                    onChange={(e) => setInput(e.target.value)}
-                                    placeholder="Type your message..."
-                                    className="rounded-full bg-white pr-12 h-10 min-h-[40px]"
-                                    disabled={isLoading}
-                                />
-                                <Button
-                                    type="submit"
-                                    size="icon"
-                                    variant="outline"
-                                    disabled={isLoading}
-                                    className="absolute right-0 top-0 rounded-full w-10 h-10 flex items-center justify-center bg-black text-white"
-                                >
-                                    <Send className="h-4 w-4" />
-                                    <span className="sr-only">Send message</span>
-                                </Button>
-                            </div>
-                            <Button
-                                type="button"
-                                size="icon"
-                                variant={showTipTapMenu ? "default" : "outline"}
-                                className={`rounded-full w-10 h-10 flex items-center justify-center ${showTipTapMenu ? 'bg-black text-white' : 'bg-[#f4f0e8]'}`}
-                                onClick={toggleTipTapMenu}
-                            >
-                                <Type className="h-4 w-4" />
-                                <span className="sr-only">Toggle TipTap menu</span>
-                            </Button>
-                            <Button
-                                type="button"
-                                size="icon"
-                                variant="outline"
-                                className="rounded-full w-10 h-10 flex items-center justify-center bg-[#f4f0e8]"
-                            >
-                                <Mic className="h-4 w-4" />
-                                <span className="sr-only">Send voice message</span>
-                            </Button>
-                            <Button
-                                type="button"
-                                size="icon"
-                                variant="outline"
-                                className="rounded-full w-10 h-10 flex items-center justify-center bg-[#f4f0e8]"
-                            >
-                                <Camera className="h-4 w-4" />
-                                <span className="sr-only">Send image</span>
-                            </Button>
-                        </form>
+        <div className="space-y-4">
+            {/* Active File Chats */}
+            {activeFiles.map(file => (
+                <FileChat
+                    key={file.file_id}
+                    file={file}
+                    authToken={authToken}
+                />
+            ))}
+
+            {/* Main Chat Input */}
+            <Card className="p-4 bg-white">
+                <form onSubmit={handleSubmit} className="relative">
+                    <FileAutocomplete
+                        files={matchingFiles}
+                        onSelect={handleFileSelect}
+                        visible={showAutocomplete}
+                    />
+                    <div className="flex gap-2">
+                        <Input
+                            type="text"
+                            placeholder='Type "file/" to search documents, or ask a question...'
+                            value={input}
+                            onChange={handleInputChange}
+                            className="flex-1"
+                        />
+                        <Button type="submit">
+                            <Send className="h-4 w-4" />
+                        </Button>
                     </div>
-                    <div ref={scrollRef} className="flex-grow overflow-y-auto space-y-3 sm:space-y-4">
-                        <motion.div layout className="space-y-4">
-                            <AnimatePresence mode="popLayout" initial={false}>
-                                {messages.map((message, index) => (
-                                    <motion.div
-                                        key={message.timestamp}
-                                        initial={{ opacity: 0, y: -20 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: 20 }}
-                                        transition={{
-                                            type: "spring",
-                                            stiffness: 300,
-                                            damping: 30,
-                                            mass: 1
-                                        }}
-                                        layout
-                                        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                                    >
-                                        <motion.div
-                                            layout
-                                            className={`max-w-[80%] rounded-lg p-4 ${message.role === 'user'
-                                                ? 'bg-black text-white'
-                                                : 'bg-white shadow-sm border border-gray-200'
-                                                }`}
-                                        >
-                                            {message.role === 'assistant' ? (
-                                                <TipTapEditor
-                                                    content={message.content}
-                                                    onUpdate={(content) => handleResponseUpdate(index, content)}
-                                                    showToolbar={showTipTapMenu && activeEditorIndex === index}
-                                                    onFocus={() => {
-                                                        if (showTipTapMenu) {
-                                                            setActiveEditorIndex(index);
-                                                        }
-                                                    }}
-                                                />
-                                            ) : (
-                                                <div className={message.isStreaming ? 'animate-pulse' : ''}>
-                                                    {message.content}
-                                                </div>
-                                            )}
-                                        </motion.div>
-                                    </motion.div>
-                                ))}
-                            </AnimatePresence>
-                        </motion.div>
-                    </div>
-                </CardContent>
+                </form>
             </Card>
         </div>
     );

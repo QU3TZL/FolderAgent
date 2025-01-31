@@ -45,16 +45,24 @@ Authorization: Bearer <token>
 Create a `.env.local` file for development:
 
 ```env
-# Development Environment
-VECTORIA_INTERNAL_URL=http://localhost:3000
+# Service URLs
+VECTORIA_INTERNAL_URL=http://localhost:8001
 NEXT_PUBLIC_UPGRADE_URL=http://localhost:8000
 NEXT_PUBLIC_UPGRADE_API_URL=http://localhost:8000
+
+# OpenAI Configuration (Required for chat functionality)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Base Configuration
 BASE_PATH=/chat
 PORT=3000
 NODE_ENV=development
 ```
 
-For production, these are configured in Render.com.
+For production, these are configured in Render.com:
+- Service URLs use internal Render.com network addresses
+- OpenAI API key is set as a secret environment variable
+- Other configuration is managed through `render.yaml`
 
 ## Deployment
 
@@ -64,13 +72,17 @@ This application is deployed on Render.com. The deployment configuration is in `
 
 - Node.js 18+
 - Access to UpGrade and Vectoria services
+- OpenAI API key
 - Google Drive API credentials
 
 ### Production Setup
 
 1. Create a new Web Service in Render
 2. Connect your repository
-3. The `render.yaml` will automatically configure:
+3. Set up environment variables:
+   - Add OpenAI API key as a secret
+   - Configure service URLs for internal network
+4. The `render.yaml` will automatically configure:
    - Build and start commands
    - Environment variables
    - Health checks
