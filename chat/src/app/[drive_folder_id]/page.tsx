@@ -6,21 +6,75 @@ import { Button } from "@/components/ui/button"
 import { Send, Camera, Mic, ArrowLeft } from 'lucide-react'
 import { Editor } from "@/components/Editor"
 import { motion, AnimatePresence } from 'framer-motion'
+import { upgradeAuth } from "@/services/upgrade"
+
+type Citation = {
+    file_id: string;
+    content_preview: string;
+}
 
 type ChatResponse = {
     query: string
     response: string
     timestamp: Date
     isStreaming?: boolean
+    citations?: Citation[]
+}
+
+type DriveToken = {
+    access_token: string;
+    refresh_token: string;
+    token_uri: string;
+    client_id: string;
+    client_secret: string;
+    scope: string[];
+};
+
+type VerifyResponse = {
+    id: string;
+    email: string;
+    state: string;
+    drive_token?: DriveToken | null;
+    [key: string]: any;
+};
+
+type RefreshResponse = {
+    token: string;
+    [key: string]: any;
+};
+
+interface APIResponse {
+    ok: boolean;
+    json(): Promise<any>;
+    status: number;
 }
 
 interface ChatPageProps {
     params: {
         drive_folder_id: string;
     };
+    searchParams?: {
+        folder_id?: string;
+    };
 }
 
-export default function ChatPage({ params }: ChatPageProps) {
+// Server Component wrapper for logging
+function logServerSide(props: any) {
+    console.log('[Server] Drive folder page props:', {
+        params: props.params,
+        searchParams: props.searchParams,
+        env: process.env.NODE_ENV,
+        upgradeUrl: process.env.NEXT_PUBLIC_UPGRADE_URL,
+        upgradeApiUrl: process.env.NEXT_PUBLIC_UPGRADE_API_URL
+    });
+    return null;
+}
+
+export default function ChatPage({ params, searchParams }: ChatPageProps) {
+    // Force server-side logging
+    logServerSide({ params, searchParams });
+
+    const [isAuthChecking, setIsAuthChecking] = useState(true);
     const [responses, setResponses] = useState<ChatResponse[]>([])
     const [input, setInput] = useState('')
     const [isLoading, setIsLoading] = useState(false)
@@ -30,185 +84,326 @@ export default function ChatPage({ params }: ChatPageProps) {
     const [authToken, setAuthToken] = useState<string | null>(null)
     const [authError, setAuthError] = useState<string | null>(null)
     const [userData, setUserData] = useState<any>(null)
+    const [hasEmbeddings, setHasEmbeddings] = useState<boolean>(true)
+    const [vectorizationError, setVectorizationError] = useState<string | null>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLInputElement>(null)
 
     // The drive_folder_id is the Google Drive folder ID
     const driveFolderId = params.drive_folder_id;
+    // The folder_id is the Supabase UUID
+    const folderId = searchParams?.folder_id;
+
+    // Add more verbose client-side logging
+    useEffect(() => {
+        console.log('[Client] Initial mount:', {
+            params,
+            searchParams,
+            env: process.env.NODE_ENV,
+            upgradeUrl: process.env.NEXT_PUBLIC_UPGRADE_URL,
+            upgradeApiUrl: process.env.NEXT_PUBLIC_UPGRADE_API_URL,
+            localStorage: {
+                hasToken: !!localStorage.getItem('auth_token'),
+                token: localStorage.getItem('auth_token')?.substring(0, 20) + '...'
+            }
+        });
+    }, [params, searchParams]);
 
     useEffect(() => {
+        let isSubscribed = true;
+        let retryCount = 0;
+        const MAX_RETRIES = 3;
+        const basePath = process.env.BASE_PATH || '/chat';
+
         const fetchFolderInfo = async () => {
             try {
-                console.log('=== Starting fetchFolderInfo ===');
-                console.log('Drive Folder ID:', driveFolderId);
-                console.log('Current URL:', window.location.href);
-
-                // Get token from URL or localStorage
+                setIsAuthChecking(true);
+                // 1. Get token (URL or localStorage)
                 const urlParams = new URLSearchParams(window.location.search);
                 const token = urlParams.get('token');
+                let currentToken = token || localStorage.getItem('auth_token');
 
-                if (token) {
-                    // If token is in URL, store it
-                    localStorage.setItem('auth_token', token);
-                    setAuthToken(token);
-                } else {
-                    // Try to get token from localStorage
-                    const storedToken = localStorage.getItem('auth_token');
-                    if (!storedToken) {
-                        // No token found, redirect to UpGrade
-                        const upgradeUrl = process.env.NEXT_PUBLIC_UPGRADE_URL || 'http://localhost:8000';
-                        console.log('No token found, redirecting to:', upgradeUrl);
-                        window.location.href = upgradeUrl;
-                        return;
-                    }
-                    setAuthToken(storedToken);
-                }
-
-                // First verify the token with UpGrade backend
-                const upgradeApiUrl = process.env.NEXT_PUBLIC_UPGRADE_API_URL || 'http://localhost:8000';
-                console.log('Verifying token with UpGrade API:', upgradeApiUrl);
-
-                const verifyResponse = await fetch(`${upgradeApiUrl}/api/user/me`, {
-                    headers: {
-                        'Authorization': `Bearer ${token || localStorage.getItem('auth_token')}`
-                    }
+                console.log('[Auth Debug] Token check:', {
+                    hasUrlToken: !!token,
+                    urlToken: token ? token.substring(0, 20) + '...' : null,
+                    hasLocalStorageToken: !!localStorage.getItem('auth_token'),
+                    localStorageToken: localStorage.getItem('auth_token')?.substring(0, 20) + '...',
+                    currentToken: currentToken ? currentToken.substring(0, 20) + '...' : 'missing',
+                    upgradeUrl: process.env.NEXT_PUBLIC_UPGRADE_URL,
+                    upgradeApiUrl: process.env.NEXT_PUBLIC_UPGRADE_API_URL,
+                    nodeEnv: process.env.NODE_ENV,
+                    searchParams: Object.fromEntries(urlParams.entries()),
+                    pathname: window.location.pathname,
+                    href: window.location.href
                 });
 
-                if (!verifyResponse.ok) {
-                    // Clear invalid token
-                    localStorage.removeItem('auth_token');
-                    setAuthToken(null);
-                    setAuthError('Authentication failed. Please sign in to UpGrade first.');
-
-                    // Redirect to UpGrade
+                if (!currentToken) {
+                    console.log('[Auth Debug] No token found:', {
+                        url: process.env.NEXT_PUBLIC_UPGRADE_URL || 'http://localhost:8000',
+                        currentLocation: window.location.href
+                    });
+                    // Redirect to upgrade for authentication
                     const upgradeUrl = process.env.NEXT_PUBLIC_UPGRADE_URL || 'http://localhost:8000';
                     window.location.href = upgradeUrl;
                     return;
                 }
 
-                const userData = await verifyResponse.json();
-                console.log('Token verified, raw user data:', userData);
+                // 2. Set initial state and clean URL
+                if (isSubscribed) {
+                    setAuthToken(currentToken);
+                    localStorage.setItem('auth_token', currentToken);
+                }
+                if (token) {
+                    const newUrl = window.location.pathname +
+                        (searchParams?.folder_id ? `?folder_id=${searchParams.folder_id}` : '');
+                    window.history.replaceState({}, '', newUrl);
+                }
 
-                // Ensure we have the required fields
-                if (!userData.id || !userData.drive_token) {
-                    console.error('Missing required user data:', {
-                        hasId: !!userData.id,
-                        hasDriveToken: !!userData.drive_token
+                // 3. Verify/refresh token and get user data
+                const upgradeApiUrl = process.env.NEXT_PUBLIC_UPGRADE_API_URL || 'http://localhost:8000';
+                upgradeAuth.setToken(currentToken);
+                const verifyResponse = await upgradeAuth.getMe();
+
+                let userData = null;
+                if (verifyResponse.ok) {
+                    console.log('[Debug] Auth response OK, getting user data');
+                    userData = await verifyResponse.json();
+
+                    // Log the full user data for debugging
+                    console.log('[Debug] Full user data:', userData);
+
+                    console.log('[Debug] User data received:', {
+                        hasData: !!userData,
+                        id: userData?.id,
+                        email: userData?.email,
+                        hasDriveToken: !!userData?.drive_token,
+                        driveTokenType: typeof userData?.drive_token,
+                        driveTokenKeys: userData?.drive_token ? Object.keys(userData.drive_token) : [],
+                        driveTokenPreview: userData?.drive_token ?
+                            (typeof userData.drive_token === 'string' ?
+                                userData.drive_token.substring(0, 50) :
+                                JSON.stringify(userData.drive_token).substring(0, 50)) + '...' : null,
+                        fullDriveToken: userData?.drive_token // Temporary for debugging
                     });
-                    throw new Error('Incomplete user data. Please reconnect your Google Drive.');
-                }
 
-                // Validate drive_token is proper JSON
-                try {
-                    JSON.parse(userData.drive_token);
-                } catch (e) {
-                    console.error('Invalid drive_token format:', e);
-                    throw new Error('Invalid Google Drive credentials. Please reconnect your Google Drive.');
-                }
+                    if (!userData) {
+                        console.log('[Debug] No user data received');
+                        throw new Error('No user data received from UpGrade');
+                    }
 
-                // Store the complete user data
-                setUserData(userData);
-                localStorage.setItem('user_data', JSON.stringify(userData));
+                    if (!userData.drive_token) {
+                        console.log('[Debug] No drive token in user data:', userData);
+                        throw new Error('No drive token in user data');
+                    }
 
-                // Get folder info from Vectoria using drive_folder_id
-                console.log('Fetching folder info from Vectoria:', {
-                    drive_folder_id: driveFolderId,
-                    email: userData.email
-                });
-
-                const folderResponse = await fetch(
-                    `/api/folder/${driveFolderId}`,
-                    {
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token || localStorage.getItem('auth_token')}`,
-                            'X-User-ID': userData.id,
-                            'X-User-Creds': userData.drive_token
+                    if (typeof userData.drive_token === 'string') {
+                        try {
+                            console.log('[Debug] Drive token is string:', userData.drive_token);
+                            // Try to parse if it's a stringified JSON
+                            const parsed = JSON.parse(userData.drive_token);
+                            console.log('[Debug] Successfully parsed drive token:', {
+                                parsedType: typeof parsed,
+                                hasAccessToken: !!parsed.access_token,
+                                hasRefreshToken: !!parsed.refresh_token,
+                                keys: Object.keys(parsed),
+                                fullParsed: parsed // Temporary for debugging
+                            });
+                            userData.drive_token = parsed;
+                        } catch (e) {
+                            console.error('[Debug] Failed to parse drive token:', {
+                                error: e,
+                                token: userData.drive_token
+                            });
+                            throw new Error('Invalid drive token format');
                         }
                     }
-                );
 
-                if (!folderResponse.ok) {
-                    const errorText = await folderResponse.text();
-                    console.error('Failed to fetch folder from Vectoria:', {
-                        status: folderResponse.status,
-                        statusText: folderResponse.statusText,
-                        error: errorText
-                    });
-                    throw new Error('Failed to access folder. Please try again.');
+                    // Validate drive token structure if present
+                    if (userData.drive_token) {
+                        console.log('[Debug] Validating drive token structure:', {
+                            tokenType: typeof userData.drive_token,
+                            hasAccessToken: !!userData.drive_token?.access_token,
+                            hasRefreshToken: !!userData.drive_token?.refresh_token,
+                            hasTokenUri: !!userData.drive_token?.token_uri,
+                            hasClientId: !!userData.drive_token?.client_id,
+                            hasClientSecret: !!userData.drive_token?.client_secret,
+                            hasScope: Array.isArray(userData.drive_token?.scope),
+                            keys: Object.keys(userData.drive_token || {}),
+                        });
+
+                        // Only validate structure if drive token exists
+                        if (typeof userData.drive_token !== 'object' ||
+                            !userData.drive_token.access_token) {
+                            console.warn('[Debug] Invalid drive token structure, proceeding without drive access:', {
+                                hasToken: !!userData.drive_token,
+                                tokenType: typeof userData.drive_token,
+                                hasAccessToken: userData.drive_token && 'access_token' in userData.drive_token,
+                                tokenKeys: userData.drive_token ? Object.keys(userData.drive_token) : []
+                            });
+                            // Set drive_token to null instead of throwing error
+                            userData.drive_token = null;
+                        }
+                    }
+                } else {
+                    // Try refresh
+                    const refreshResponse = await upgradeAuth.authenticatedRequest('POST', '/api/auth/refresh');
+
+                    if (!refreshResponse.ok) {
+                        throw new Error('Failed to refresh token');
+                    }
+
+                    const refreshData = await refreshResponse.json();
+                    currentToken = refreshData.token;
+                    if (isSubscribed && currentToken) {
+                        localStorage.setItem('auth_token', currentToken);
+                        setAuthToken(currentToken);
+                        upgradeAuth.setToken(currentToken);
+                    }
+
+                    // Try verify again with new token
+                    const retryVerify = await upgradeAuth.getMe();
+
+                    if (!retryVerify.ok) {
+                        throw new Error('Failed to verify token after refresh');
+                    }
+
+                    userData = await retryVerify.json();
                 }
 
-                const folderData = await folderResponse.json();
-                console.log('Folder data retrieved:', folderData);
+                if (!userData || !isSubscribed) {
+                    throw new Error('Failed to get user data');
+                }
 
-                // Set folder info
-                setFolderName(folderData.name || 'Untitled Folder');
-                setFolderUrl(folderData.web_view_link || `https://drive.google.com/drive/folders/${driveFolderId}`);
+                // 4. Store user data
+                setUserData(userData);
 
-                // Get vectorization status
+                // 5. Get folder info if we have drive access
+                if (userData.drive_token) {
+                    try {
+                        const folderResponse = await fetch(
+                            `${basePath}/api/folder/${folderId || driveFolderId}`,
+                            {
+                                headers: {
+                                    'Authorization': `Bearer ${currentToken}`,
+                                    'X-User-ID': userData.id,
+                                    'X-User-Creds': JSON.stringify(userData.drive_token),
+                                    'X-Drive-Folder-ID': driveFolderId
+                                }
+                            }
+                        );
+
+                        if (!folderResponse.ok) {
+                            const errorText = await folderResponse.text();
+                            console.warn('Folder request failed:', {
+                                status: folderResponse.status,
+                                error: errorText
+                            });
+                            // Set default folder name but don't block chat
+                            if (isSubscribed) {
+                                setFolderName('Untitled Folder');
+                                setFolderUrl(`https://drive.google.com/drive/folders/${driveFolderId}`);
+                            }
+                        } else {
+                            const folderData = await folderResponse.json();
+                            console.log('[Debug] Folder info response:', {
+                                folderData,
+                                name: folderData.name,
+                                web_view_link: folderData.web_view_link,
+                                driveFolderId,
+                                folder_id: folderData.id
+                            });
+                            if (isSubscribed) {
+                                setFolderName(folderData.name || 'Untitled Folder');
+                                setFolderUrl(folderData.web_view_link || `https://drive.google.com/drive/folders/${driveFolderId}`);
+                                // Store the Supabase UUID if we got it
+                                if (folderData.id) {
+                                    localStorage.setItem('folder_uuid', folderData.id);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Failed to fetch folder info:', error);
+                        // Set default folder name but don't block chat
+                        if (isSubscribed) {
+                            setFolderName('Untitled Folder');
+                            setFolderUrl(`https://drive.google.com/drive/folders/${driveFolderId}`);
+                        }
+                    }
+                } else {
+                    // No drive access, set default folder name
+                    if (isSubscribed) {
+                        setFolderName('UpGrade Chat');
+                        setFolderUrl('');
+                    }
+                }
+
+                // 6. Get vectorization status
                 try {
-                    console.log('Fetching vectorization status...');
                     const statusResponse = await fetch(
-                        `/api/folder/${driveFolderId}/vectorization-status`,
+                        `${basePath}/api/folder/${folderId || driveFolderId}/vectorization-status`,
                         {
                             headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${token || localStorage.getItem('auth_token')}`,
+                                'Authorization': `Bearer ${currentToken}`,
                                 'X-User-ID': userData.id,
-                                'X-User-Creds': userData.drive_token
+                                'X-User-Creds': userData.drive_token,
+                                'X-Drive-Folder-ID': driveFolderId
                             }
                         }
                     );
 
-                    console.log('Vectorization status response:', statusResponse.status);
-                    if (!statusResponse.ok) {
-                        const errorText = await statusResponse.text();
-                        console.warn('Failed to fetch vectorization status:', {
-                            status: statusResponse.status,
-                            statusText: statusResponse.statusText,
-                            error: errorText
-                        });
-                    } else {
+                    if (statusResponse.ok && isSubscribed) {
                         const statusData = await statusResponse.json();
-                        console.log('Folder vectorization status:', statusData);
-
-                        // Update folder name and URL if we got them from the status
-                        if (statusData.name) {
-                            setFolderName(statusData.name);
-                            console.log('Updated folder name from status:', statusData.name);
-                        }
-                        if (statusData.web_view_link) {
-                            setFolderUrl(statusData.web_view_link);
-                            console.log('Updated folder URL from status:', statusData.web_view_link);
-                        }
-
-                        // Log processing status
-                        if (statusData.processing_records?.length > 0) {
-                            console.log('Processing records:', statusData.processing_records);
-                        }
-                        if (statusData.has_embeddings) {
-                            console.log('Folder has embeddings');
-                        }
+                        console.log('[Debug] Vectorization status:', statusData);
+                        // Only set hasEmbeddings to false if we explicitly know there are no embeddings
+                        setHasEmbeddings(statusData.status === 'COMPLETED' || !!statusData.has_embeddings);
+                        setVectorizationError(null);
+                    } else {
+                        // If we can't get status, assume embeddings are ready
+                        console.log('[Debug] Vectorization status check failed, assuming embeddings exist');
+                        setHasEmbeddings(true);
                     }
                 } catch (error) {
-                    console.warn('Failed to fetch vectorization status:', {
-                        error: error instanceof Error ? error.message : String(error),
-                        stack: error instanceof Error ? error.stack : undefined
-                    });
+                    // Don't block the UI for vectorization status errors
+                    console.error('[Debug] Error checking vectorization status:', error);
+                    setHasEmbeddings(false);
                 }
             } catch (error) {
-                console.error('=== fetchFolderInfo Failed ===');
-                console.error('Error details:', {
-                    message: error instanceof Error ? error.message : String(error),
-                    stack: error instanceof Error ? error.stack : undefined
-                });
-                // Set a default folder name to show the error state
-                setFolderName('Authentication Required');
+                console.error('Initialization failed:', error);
+                if (isSubscribed) {
+                    setFolderName('Error Loading Folder');
+                    if (error instanceof Error) {
+                        const errorMessage = error.message.toLowerCase();
+                        console.log('[Auth Debug] Error details:', {
+                            error: error.message,
+                            stack: error.stack,
+                            isTokenError: errorMessage.includes('token'),
+                            isAuthError: errorMessage.includes('auth'),
+                            isUnauthorized: errorMessage.includes('unauthorized'),
+                            upgradeUrl: process.env.NEXT_PUBLIC_UPGRADE_URL,
+                            nodeEnv: process.env.NODE_ENV
+                        });
+
+                        // DEBUGGING: Remove redirect
+                        if (errorMessage.includes('token') ||
+                            errorMessage.includes('auth') ||
+                            errorMessage.includes('unauthorized')) {
+                            console.log('[Auth Debug] Auth error would redirect to:', process.env.NEXT_PUBLIC_UPGRADE_URL || 'http://localhost:8000');
+                        }
+                    }
+                }
+            } finally {
+                if (isSubscribed) {
+                    setIsAuthChecking(false);
+                }
             }
         };
 
         fetchFolderInfo();
-    }, [driveFolderId]);
+
+        return () => {
+            isSubscribed = false;
+        };
+    }, [driveFolderId, searchParams?.folder_id]);
 
     // Animate loading dots
     useEffect(() => {
@@ -222,49 +417,82 @@ export default function ChatPage({ params }: ChatPageProps) {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!input.trim() || !authToken) return;
+        if (!input.trim()) return;
+
+        // Check for valid token
+        const currentToken = authToken || localStorage.getItem('auth_token');
+        if (!currentToken) {
+            console.error('[Chat] No auth token available');
+            const upgradeUrl = process.env.NEXT_PUBLIC_UPGRADE_URL || 'http://localhost:8000';
+            window.location.href = upgradeUrl;
+            return;
+        }
+
+        let queryNote = '';
+        if (!hasEmbeddings) {
+            queryNote = '\n\nNote: This folder is still being processed. Responses may be less accurate until processing completes.';
+        }
 
         try {
             setIsLoading(true)
 
             // Add combined message immediately
             const newMessage = {
-                query: input,
+                query: input + queryNote,
                 response: '',
                 timestamp: new Date(),
-                isStreaming: true
+                isStreaming: true,
+                citations: []
             };
             setResponses(prev => [newMessage, ...prev]);
 
-            console.log('Making chat request to:', `/api/chat`);
-            const response = await fetch(`/api/chat`, {
+            console.log('Making chat request to:', `/chat/api/chat`);
+            const storedFolderUuid = localStorage.getItem('folder_uuid');
+            const response = await fetch(`/chat/api/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authToken}`
+                    'Accept': 'application/json',
+                    'Authorization': `Bearer ${currentToken}`
                 },
                 body: JSON.stringify({
                     query: input,
-                    folder_id: driveFolderId,
+                    folder_id: storedFolderUuid || folderId,
+                    drive_folder_id: driveFolderId,
                     user_id: userData?.id,
-                    user_creds: userData?.drive_token ? JSON.parse(userData.drive_token) : null
+                    user_creds: userData?.drive_token ? userData.drive_token : null
                 }),
             });
 
-            const data = await response.json();
-            console.log('Chat response data:', data);
-
+            // Check if response is ok before trying to parse JSON
             if (!response.ok) {
-                console.error('Chat request failed:', {
-                    status: response.status,
-                    data: data
-                });
-                throw new Error(data.error || data.detail || `Error ${response.status}: ${response.statusText}`);
+                const contentType = response.headers.get('content-type');
+                let errorMessage;
+
+                if (contentType?.includes('application/json')) {
+                    const errorData = await response.json();
+                    errorMessage = errorData.error || errorData.detail || `Error ${response.status}: ${response.statusText}`;
+                } else {
+                    // Handle non-JSON responses
+                    const text = await response.text();
+                    console.error('Non-JSON error response:', text);
+                    errorMessage = `Server error (${response.status}). Please try again.`;
+                }
+
+                throw new Error(errorMessage);
             }
+
+            // Now we know we have a JSON response
+            const data = await response.json();
 
             if (data.error) {
                 console.error('Chat response error:', data.error);
                 throw new Error(data.error);
+            }
+
+            // Validate the response structure
+            if (!data.response || typeof data.response !== 'string') {
+                throw new Error('Invalid response format from server');
             }
 
             // Stream in the response
@@ -286,7 +514,11 @@ export default function ChatPage({ params }: ChatPageProps) {
                     .join('');
 
                 setResponses(prev => prev.map((r, idx) =>
-                    idx === 0 ? { ...r, response: formattedResponse } : r
+                    idx === 0 ? {
+                        ...r,
+                        response: formattedResponse,
+                        citations: data.citations
+                    } : r
                 ));
 
                 await new Promise(resolve => setTimeout(resolve, 5));
@@ -294,7 +526,11 @@ export default function ChatPage({ params }: ChatPageProps) {
 
             // Mark as complete
             setResponses(prev => prev.map((r, idx) =>
-                idx === 0 ? { ...r, isStreaming: false } : r
+                idx === 0 ? {
+                    ...r,
+                    isStreaming: false,
+                    citations: data.citations
+                } : r
             ));
 
             // Clear input
@@ -315,6 +551,13 @@ export default function ChatPage({ params }: ChatPageProps) {
                     isStreaming: false
                 } : r
             ));
+
+            // If it's an authentication error, redirect to upgrade
+            if (errorMessage.includes('401') || errorMessage.includes('Authentication')) {
+                const upgradeUrl = process.env.NEXT_PUBLIC_UPGRADE_URL || 'http://localhost:8000';
+                window.location.href = upgradeUrl;
+                return;
+            }
         } finally {
             setIsLoading(false);
         }
@@ -325,6 +568,17 @@ export default function ChatPage({ params }: ChatPageProps) {
             prev.map((r, i) => i === index ? { ...r, response: newContent } : r)
         );
     };
+
+    if (isAuthChecking) {
+        return (
+            <div className="w-screen h-screen flex items-center justify-center bg-gray-50">
+                <div className="text-center">
+                    <div className="mb-4 text-lg font-semibold text-gray-700">Checking authentication...</div>
+                    <div className="text-sm text-gray-500">Please wait while we verify your credentials</div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="w-screen min-h-screen bg-gray-50 flex justify-center items-start pt-4 px-5">
@@ -431,14 +685,34 @@ export default function ChatPage({ params }: ChatPageProps) {
                                                     )}
                                                 </div>
                                             ) : (
-                                                <Editor
-                                                    key={`editor-${response.timestamp.getTime()}`}
-                                                    content={response.response}
-                                                    onUpdate={(content) => handleResponseUpdate(index, content)}
-                                                    showToolbar={false}
-                                                    immediatelyRender={false}
-                                                    onSubmit={() => { }}
-                                                />
+                                                <>
+                                                    <Editor
+                                                        key={`editor-${response.timestamp.getTime()}`}
+                                                        content={response.response}
+                                                        onUpdate={(content) => {
+                                                            // Only update if content has changed
+                                                            if (content !== response.response) {
+                                                                handleResponseUpdate(index, content);
+                                                            }
+                                                        }}
+                                                        showToolbar={false}
+                                                        immediatelyRender={false}
+                                                        onSubmit={() => { }}
+                                                    />
+                                                    {response.citations && response.citations.length > 0 && (
+                                                        <div className="mt-4 pt-4 border-t border-gray-100">
+                                                            <div className="text-xs text-gray-500 mb-2">Sources:</div>
+                                                            <div className="space-y-2">
+                                                                {response.citations.map((citation, idx) => (
+                                                                    <div key={idx} className="text-xs text-gray-600">
+                                                                        <div className="font-medium">{citation.file_id}</div>
+                                                                        <div className="text-gray-500">{citation.content_preview}</div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </>
                                             )}
                                         </div>
                                     </div>
@@ -448,6 +722,12 @@ export default function ChatPage({ params }: ChatPageProps) {
                     </div>
                 </div>
             </div>
+            {vectorizationError && (
+                <div className="p-4 mb-4 text-amber-800 bg-amber-50 rounded-lg">
+                    <p>{vectorizationError}</p>
+                    <p className="text-sm mt-2">This usually takes a few minutes. The page will update automatically when ready.</p>
+                </div>
+            )}
         </div>
     )
 } 

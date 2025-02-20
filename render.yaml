@@ -23,5 +23,5 @@ services:
         value: /chat
       - key: NODE_OPTIONS
         value: --max_old_space_size=4096
-    healthCheckPath: /chat/health
+    healthCheckPath: /health
     autoDeploy: true 
