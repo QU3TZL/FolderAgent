@@ -104,80 +104,8 @@ export class VectoriaClient {
         return data;
     }
 
-    /**
-     * Send a chat request to Vectoria
-     * If relevant_chunks is not provided, it will use Vectoria's built-in similarity search
-     */
-    async chat(request: ChatRequest, authToken: string): Promise<ChatResponse> {
-        let lastError: Error | null = null;
-
-        // Add time context to the request
-        const timeContext = this.generateTimeContext();
-        const enrichedRequest: ChatRequest = {
-            ...request,
-            system_context: timeContext,
-        };
-
-        // If no relevant chunks provided, we'll let Vectoria handle the similarity search
-        if (!enrichedRequest.relevant_chunks) {
-            console.log('[VectoriaClient] No pre-fetched chunks provided, Vectoria will handle similarity search');
-        }
-
-        for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-            try {
-                console.log(`[VectoriaClient] Sending chat request to ${this.baseUrl}/api/chat`, {
-                    folder_id: enrichedRequest.folder_id,
-                    attempt: attempt + 1,
-                    environment: process.env.NODE_ENV,
-                    time_context: timeContext,
-                    has_prefetched_chunks: !!enrichedRequest.relevant_chunks,
-                });
-
-                const response = await fetch(`${this.baseUrl}/api/chat`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken}`,
-                    },
-                    body: JSON.stringify(enrichedRequest),
-                });
-
-                if (!response.ok) {
-                    const errorData: VectoriaError = await response.json();
-                    throw new Error(errorData.detail || `Vectoria API error: ${response.status}`);
-                }
-
-                const data: ChatResponse = await response.json();
-                console.log('[VectoriaClient] Successfully received chat response', {
-                    folder_id: enrichedRequest.folder_id,
-                    citations_count: data.citations.length,
-                    context_docs_count: data.context_used.length,
-                    environment: process.env.NODE_ENV,
-                });
-
-                return data;
-
-            } catch (error) {
-                lastError = error as Error;
-                console.error('[VectoriaClient] Error in chat request', {
-                    attempt: attempt + 1,
-                    error: error instanceof Error ? error.message : String(error),
-                    environment: process.env.NODE_ENV,
-                });
-
-                // Only retry on network errors or 5xx responses
-                if (error instanceof Error && !error.message.includes('API error: 5')) {
-                    throw error;
-                }
-
-                // Wait before retrying (exponential backoff)
-                if (attempt < this.maxRetries - 1) {
-                    const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
-            }
-        }
-
-        throw lastError || new Error('Failed to get response from Vectoria after multiple attempts');
+    async getVectorizationStatus(folder_id: string, authToken: string): Promise<string> {
+        // Implementation of getVectorizationStatus method
+        throw new Error('Method not implemented');
     }
 } 

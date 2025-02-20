@@ -16,49 +16,58 @@ export async function GET() {
         status: 'healthy',
         timestamp: new Date().toISOString(),
         services: {
-            upgrade: { status: 'unknown' },
-            vectoria: { status: 'unknown' }
+            upgrade: { status: 'unknown' }
         }
     };
 
     // Check UpGrade API
     try {
         const upgradeUrl = process.env.NEXT_PUBLIC_UPGRADE_API_URL;
+        console.log('[Health] Checking UpGrade health at:', upgradeUrl);
+
         if (!upgradeUrl) {
             throw new Error('NEXT_PUBLIC_UPGRADE_API_URL not configured');
         }
 
-        const upgradeResponse = await fetch(`${upgradeUrl}/health`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        console.log('[Health] Making request to:', `${upgradeUrl}/api/health`);
+        const upgradeResponse = await fetch(`${upgradeUrl}/api/health`, {
+            signal: controller.signal,
+            headers: {
+                'Accept': 'application/json'
+            },
+            cache: 'no-store'
+        }).catch(error => {
+            console.error('[Health] Fetch error details:', {
+                name: error.name,
+                message: error.message,
+                cause: error.cause,
+                stack: error.stack
+            });
+            throw error;
+        });
+
+        clearTimeout(timeout);
+        console.log('[Health] Response status:', upgradeResponse.status);
+
         if (!upgradeResponse.ok) {
+            const errorBody = await upgradeResponse.text();
+            console.error('[Health] Error response body:', errorBody);
             throw new Error(`HTTP ${upgradeResponse.status}: ${upgradeResponse.statusText}`);
         }
+
+        const responseData = await upgradeResponse.json();
+        console.log('[Health] UpGrade health response:', responseData);
+
         health.services.upgrade = { status: 'healthy' };
     } catch (error) {
-        console.error('[Health] UpGrade health check failed:', error);
-        health.services.upgrade = {
-            status: 'unhealthy',
-            error: error instanceof Error ? error.message : String(error)
-        };
-    }
-
-    // Check Vectoria API
-    try {
-        const vectoriaUrl = process.env.VECTORIA_INTERNAL_URL;
-        if (!vectoriaUrl) {
-            throw new Error('VECTORIA_INTERNAL_URL not configured');
-        }
-
-        const vectoriaResponse = await fetch(`${vectoriaUrl}/health`);
-        if (!vectoriaResponse.ok) {
-            throw new Error(`HTTP ${vectoriaResponse.status}: ${vectoriaResponse.statusText}`);
-        }
-        health.services.vectoria = { status: 'healthy' };
-    } catch (error) {
-        console.error('[Health] Vectoria health check failed:', error);
-        health.services.vectoria = {
-            status: 'unhealthy',
-            error: error instanceof Error ? error.message : String(error)
-        };
+        console.error('[Health] Error:', error);
+        return NextResponse.json(
+            { error: error instanceof Error ? error.message : 'Health check failed' },
+            { status: 500 }
+        );
     }
 
     // Determine overall health
@@ -72,17 +81,13 @@ export async function GET() {
         headers: {
             'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
             'Pragma': 'no-cache',
-            'Expires': '0'
-        }
-    });
-}
-
-export async function OPTIONS() {
-    return NextResponse.json({}, {
-        headers: {
+            'Expires': '0',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Allow-Credentials': 'true',
+            'Vary': 'Origin',
+            'Access-Control-Max-Age': '86400'
         }
     });
 } 
